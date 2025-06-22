@@ -2,17 +2,31 @@ const express = require("express");
 const serverless = require("serverless-http");
 const cors = require("cors");
 const fetch = require("node-fetch");
-const { spawn } = require("node:child_process");
+var adb = require("adbkit");
+const { spawn } = require("child_process");
 const LGTV = require("lgtv2");
 require("dotenv").config();
 const cheerio = require("cheerio");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 const PORT = 3333;
 
-let tvClient = null;
+let clientLG = null;
+const clientFire = adb.createClient();
 let pointerSocket = null;
 const clientKey = process.env.CLIENT_KEY;
+
+const dirPath = path.join(__dirname, "adb", "platform-tools");
+
+fs.readdir(dirPath, (err, files) => {
+  if (err) {
+    console.error("Erro ao ler a pasta:", err);
+  } else {
+    console.log("Arquivos na pasta:", files);
+  }
+});
 
 if (!clientKey) {
   console.log("CLIENT_KEY não definida no .env");
@@ -121,12 +135,12 @@ app.post("/roku/:ip/input", async (req, res) => {
 app.post("/lg/connect", async (req, res) => {
   const { ip } = req.body;
 
-  if (tvClient) {
-    tvClient.disconnect();
-    tvClient = null;
+  if (clientLG) {
+    clientLG.disconnect();
+    clientLG = null;
   }
 
-  tvClient = LGTV({
+  clientLG = LGTV({
     url: `ws://${ip}:3000`,
     clientKey: clientKey,
     keyFile: "client-key.json",
@@ -134,44 +148,44 @@ app.post("/lg/connect", async (req, res) => {
 
   console.log("🔌 Conectando à TV no IP:", ip, clientKey);
 
-  tvClient.on("connect", () => {
+  clientLG.on("connect", () => {
     console.log("Conectado à TV");
-    if (!clientKey && tvClient.clientKey) {
-      clientKey = tvClient.clientKey;
+    if (!clientKey && clientLG.clientKey) {
+      clientKey = clientLG.clientKey;
     }
   });
-  tvClient.on("prompt", () => console.log("Aceite o pareamento na TV"));
-  tvClient.on("error", (err) => console.error("Erro:", err));
-  tvClient.on("close", () => {
+  clientLG.on("prompt", () => console.log("Aceite o pareamento na TV"));
+  clientLG.on("error", (err) => console.error("Erro:", err));
+  clientLG.on("close", () => {
     pointerSocket = null;
-    tvClient = null;
+    clientLG = null;
   });
 
   res.json({ status: "Conectando..." });
 });
 
 app.post("/lg/command/:action", (req, res) => {
-  if (!tvClient) return res.status(400).json({ error: "TV não conectada" });
+  if (!clientLG) return res.status(400).json({ error: "TV não conectada" });
 
-  //console.log(tvClient.getSocket.toString());
+  //console.log(clientLG.getSocket.toString());
   const actions = {
-    power: () => tvClient.request("ssap://system/turnOff"),
-    volumeup: () => tvClient.request("ssap://audio/volumeUp"),
-    volumedown: () => tvClient.request("ssap://audio/volumeDown"),
-    mute: () => tvClient.request("ssap://audio/setMute", { mute: true }),
-    unmute: () => tvClient.request("ssap://audio/setMute", { mute: false }),
-    play: () => tvClient.request("ssap://media.controls/play"),
-    pause: () => tvClient.request("ssap://media.controls/pause"),
+    power: () => clientLG.request("ssap://system/turnOff"),
+    volumeup: () => clientLG.request("ssap://audio/volumeUp"),
+    volumedown: () => clientLG.request("ssap://audio/volumeDown"),
+    mute: () => clientLG.request("ssap://audio/setMute", { mute: true }),
+    unmute: () => clientLG.request("ssap://audio/setMute", { mute: false }),
+    play: () => clientLG.request("ssap://media.controls/play"),
+    pause: () => clientLG.request("ssap://media.controls/pause"),
     netflix: () =>
-      tvClient.request("ssap://system.launcher/launch", { id: "netflix" }),
+      clientLG.request("ssap://system.launcher/launch", { id: "netflix" }),
     hdmi: () =>
-      tvClient.request("ssap://tv/switchInput", { inputId: "HDMI_1" }),
+      clientLG.request("ssap://tv/switchInput", { inputId: "HDMI_1" }),
     info: () =>
-      tvClient.request(
+      clientLG.request(
         "ssap://com.webos.service.update/getCurrentSWInformation"
       ),
     home: () =>
-      tvClient.getSocket(
+      clientLG.getSocket(
         "ssap://com.webos.service.networkinput/getPointerInputSocket",
         (err, sock) => {
           if (err) return reject(err);
@@ -188,12 +202,12 @@ app.post("/lg/command/:action", (req, res) => {
         }
       ),
     back: () =>
-      tvClient.request("ssap://system.launcher/getAppState", (err, res) => {
+      clientLG.request("ssap://system.launcher/getAppState", (err, res) => {
         if (err) console.error("Erro:", err);
         else console.log("Launcher aberto", res);
       }),
     up: () =>
-      tvClient.getSocket(
+      clientLG.getSocket(
         "ssap://com.webos.service.networkinput/getPointerInputSocket",
         (err, sock) => {
           if (!err) {
@@ -204,9 +218,9 @@ app.post("/lg/command/:action", (req, res) => {
         }
       ),
     down: () =>
-      tvClient.request("ssap://tv/switchInput", { inputId: "HDMI_1" }),
+      clientLG.request("ssap://tv/switchInput", { inputId: "HDMI_1" }),
     left: () =>
-      tvClient.getSocket(
+      clientLG.getSocket(
         "ssap://com.webos.service.networkinput/getPointerInputSocket",
         function (err, sock) {
           if (!err) {
@@ -217,7 +231,7 @@ app.post("/lg/command/:action", (req, res) => {
         }
       ),
     right: () =>
-      tvClient.getSocket(
+      clientLG.getSocket(
         "ssap://com.webos.service.networkinput/getPointerInputSocket",
         function (err, sock) {
           if (!err) {
@@ -228,7 +242,7 @@ app.post("/lg/command/:action", (req, res) => {
         }
       ),
     select: () =>
-      tvClient.getSocket(
+      clientLG.getSocket(
         "ssap://com.webos.service.networkinput/getPointerInputSocket",
         function (err, sock) {
           if (!err) {
@@ -239,7 +253,7 @@ app.post("/lg/command/:action", (req, res) => {
       ),
 
     /* home: () =>
-      tvClient.request(
+      clientLG.request(
         "ssap://system.notifications/createToast",
         { message: "AAAA" },
         (err, res) => {
@@ -284,7 +298,7 @@ app.post("/lg/pointer/:action", (req, res) => {
 });
 
 app.get("/lg/info/:type", (req, res) => {
-  if (!tvClient) return res.status(400).json({ error: "TV não conectada" });
+  if (!clientLG) return res.status(400).json({ error: "TV não conectada" });
 
   const endpoints = {
     apps: "ssap://com.webos.applicationManager/listLaunchPoints",
@@ -296,7 +310,7 @@ app.get("/lg/info/:type", (req, res) => {
   const endpoint = endpoints[req.params.type];
   if (!endpoint) return res.status(400).json({ error: "Tipo inválido" });
 
-  tvClient.request(endpoint, (err, response) => {
+  clientLG.request(endpoint, (err, response) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(response);
   });
@@ -305,8 +319,15 @@ app.get("/lg/info/:type", (req, res) => {
 // Amazon
 app.post("/firetv/:ip/connect", async (req, res) => {
   const { ip } = req.params;
-  const connect = spawn("./adb/platform-tools/adb", ["connect", `${ip}:5555`]);
-  connect.stdout.on("data", (data) => {
+  try {
+    const device = await client.connect(ip + ":5555");
+    res.send({ status: `Conectado ao Fire TV Stick (${ip})` });
+  } catch (err) {
+    console.error("Erro ao conectar via ADB:", err);
+    res.status(500).send("Erro ao conectar via ADB");
+  }
+  //const connect = spawn("./adb/platform-tools/adb", ["connect", `${ip}:5555`]);
+  /* connect.stdout.on("data", (data) => {
     const msg = data.toString();
     console.log(`ADB Connect: ${msg}`);
   });
@@ -322,7 +343,7 @@ app.post("/firetv/:ip/connect", async (req, res) => {
     } else {
       res.status(500).send("Erro ao conectar via ADB");
     }
-  });
+  }); */
 });
 
 app.post("/firetv/:ip/keypress/:keycode", async (req, res) => {
@@ -336,22 +357,29 @@ app.post("/firetv/:ip/keypress/:keycode", async (req, res) => {
     select: 23,
     back: 4,
   };
-  const btns = keycodes[keycode];
-  if (!btns) {
-    console.error("Botão inválido:", keycode);
-    return;
+  const keyEvent = keycodes[keycode];
+  if (!keyEvent) {
+    return res.status(400).send("Botão inválido");
   }
 
-  const adb = spawn("./adb/platform-tools/adb", [
+  try {
+    await client.shell(ip + ":5555", `input keyevent ${keyEvent}`);
+    res.send({ status: `Tecla ${keycode} pressionada` });
+  } catch (err) {
+    console.error("Erro ao enviar keypress:", err);
+    res.status(500).send("Erro ao enviar comando");
+  }
+
+  /* const adb = spawn("./adb/platform-tools/adb", [
     "-s",
     `${ip}:5555`,
     "shell",
     "input",
     "keyevent",
     btns.toString(),
-  ]);
+  ]);*/
 
-  adb.stdout.on("data", (data) => {
+  /* adb.stdout.on("data", (data) => {
     console.log(`ADB Keypress: ${data}`);
   });
 
@@ -365,22 +393,33 @@ app.post("/firetv/:ip/keypress/:keycode", async (req, res) => {
     } else {
       res.status(500).send("Erro ao enviar comando");
     }
-  });
+  }); */
 });
 
 app.post("/firetv/:ip/input", async (req, res) => {
   const { ip } = req.params;
   const { text } = req.query;
-  const adb = spawn("./adb/platform-tools/adb", [
+
+  try {
+    await client.shell(
+      ip + ":5555",
+      `input text '${text.replace(/'/g, "'\\''")}'`
+    );
+    res.send({ status: `Texto "${text}" enviado` });
+  } catch (err) {
+    console.error("Erro ao enviar texto:", err);
+    res.status(500).send("Erro ao enviar texto");
+  }
+  /* const adb = spawn("./adb/platform-tools/adb", [
     "-s",
     `${ip}:5555`,
     "shell",
     "input",
     "text",
     `"${text}"`,
-  ]);
+  ]); */
 
-  adb.stdout.on("data", (data) => {
+  /* adb.stdout.on("data", (data) => {
     console.log(`ADB Input: ${data}`);
   });
 
@@ -394,12 +433,19 @@ app.post("/firetv/:ip/input", async (req, res) => {
     } else {
       res.status(500).send("Erro ao enviar texto");
     }
-  });
+  }); */
 });
 
 app.post("/firetv/:ip/launch/:app", async (req, res) => {
   const { ip, app } = req.params;
-  const adb = spawn("./adb/platform-tools/adb", [
+  try {
+    await client.shell(ip + ":5555", `am start -n ${app}`);
+    res.send({ status: `App ${app} aberto` });
+  } catch (err) {
+    console.error("Erro ao abrir app:", err);
+    res.status(500).send("Erro ao abrir app");
+  }
+  /* const adb = spawn("./adb/platform-tools/adb", [
     "-s",
     `${ip}:5555`,
     "shell",
@@ -423,13 +469,38 @@ app.post("/firetv/:ip/launch/:app", async (req, res) => {
     } else {
       res.status(500).send("Erro ao abrir app");
     }
-  });
+  }); */
 });
 
 app.get("/firetv/:ip/apps", async (req, res) => {
   const { ip } = req.params;
 
-  const adb = spawn("./adb/platform-tools/adb", [
+  try {
+    const output = await client.shell(ip + ":5555", "pm list packages");
+    const raw = await adb.util.readAll(output);
+    const lines = raw
+      .toString()
+      .split("\n")
+      .map((l) => l.replace("package:", "").trim())
+      .filter(Boolean);
+
+    // Filtra e formata como antes
+    const filteredPackages = lines.filter((pkg) =>
+      allowedApps.some((app) => pkg.toLowerCase().includes(app.toLowerCase()))
+    );
+
+    // Se quiser, implementa getAppIcon para cada pacote
+    const appData = filteredPackages.map((pkg) => ({
+      package: pkg,
+      icon: null,
+    })); // icon null por enquanto
+
+    res.send(appData);
+  } catch (err) {
+    console.error("Erro ao listar apps:", err);
+    res.status(500).send("Erro ao listar apps");
+  }
+  /* const adb = spawn("./adb/platform-tools/adb", [
     "-s",
     `${ip}:5555`,
     "shell",
@@ -470,7 +541,7 @@ app.get("/firetv/:ip/apps", async (req, res) => {
     } else {
       res.status(500).send("Erro ao listar apps");
     }
-  });
+  }); */
 });
 
 if (require.main === module) {
