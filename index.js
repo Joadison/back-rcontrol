@@ -1,4 +1,5 @@
 const express = require("express");
+const serverless = require("serverless-http");
 const cors = require("cors");
 const fetch = require("node-fetch");
 const { spawn } = require("node:child_process");
@@ -61,6 +62,10 @@ async function getAppIcon(packageName) {
 
 app.use(cors());
 app.use(express.json());
+
+app.get("/", (req, res) => {
+  res.json({ mensagem: "API Express.js" });
+});
 
 // ROKU
 app.post("/roku/:ip/keypress/:command", async (req, res) => {
@@ -468,6 +473,12 @@ app.get("/firetv/:ip/apps", async (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Backend rodando em http://localhost:${PORT}`);
-});
+if (require.main === module) {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`🚀 Backend rodando em http://localhost:${PORT}`);
+  });
+}
+
+module.exports = app;
+module.exports.handler = serverless(app);
